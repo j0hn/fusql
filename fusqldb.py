@@ -2,89 +2,38 @@
 # the extent permitted by applicable law. You can redistribute it
 # and/or modify it under the terms of the Do What The Fuck You Want
 # To Public License, Version 2, as published by Sam Hocevar. See
-# http://sam.zoy.org/wtfpl/COPYING for more details. 
+# http://sam.zoy.org/wtfpl/COPYING for more details.
 
 import time
-import sqlite3
+import XRecord
 
 import common
 import fusqlogger
 
 class FusqlDb(object):
     @fusqlogger.log
-    def __init__(self, database):
+    def __init__(self, engine, database):
         '''Main api to control the database management'''
-
-        self.database = database
-        self.connection = sqlite3.connect(database, check_same_thread=False)
-        self.cursor = self.connection.cursor()
-        self.cache = {}
-        self.cache_time = 1.5 # seconds
-
-    def execute_sql(self, sql, commit=True, dump=True, useCache=True):
-        '''Executes sql, commits the database and logs the sql'''
-
-        if sql in self.cache.keys() and useCache:
-            now = time.time()
-            
-            # if we hit on cache, and it's not *too* old
-            # we use, cached version
-            if (now - self.cache[sql][1]) < self.cache_time:
-                previous = self.cache[sql]
-
-                fusqlogger.dump(sql, cached=True)
-                return previous[0]
-
-        self.cursor.execute(sql)
-        response = [x for x in self.cursor]
-
-        if sql.count("SELECT"):
-            self.cache[sql] = (response, time.time())
-
-        if commit:
-            self.connection.commit()
-        
-        if dump:
-            fusqlogger.dump(sql)
-
-        return response
-        
-    @fusqlogger.log
-    def get_element_by_id(self, table_name, element_id):
-        '''Returns all elements of table's
-           row with a certain id'''
-
-        sql = "SELECT * FROM '%s' WHERE id = %d" % (table_name, element_id)
-        response = self.execute_sql(sql, False)
-        return response[0]
+        self.db = XRecord.connect(engine, name=database)
 
     @fusqlogger.log
-    def get_all_elements(self, table_name):
-        '''Returs all elements of a table'''
-        
-        sql = "SELECT * FROM '%s'" % table_name
-        response = self.execute_sql(sql, False)
-        return response
+    def get_cant_rows(self, table_name):
+        '''Returns how many rows has a table'''
+        rows = self.db.XArray(table_name)
+        return len(rows)
 
     @fusqlogger.log
     def get_elements_by_field(self, field, table):
         '''Returns an specific field of a table'''
 
-        sql = "SELECT %s from %s" %(field, table)
-        response = self.execute_sql(sql, False)
-        return [x[0] for x in response]
+        result = self.db.XArray(table)
+        return [getattr(x, field) for x in result]
 
     @fusqlogger.log
     def get_tables(self):
-        '''Returns a list with the names of 
+        '''Returns a list with the names of
            the database tables'''
-
-        sql = "SELECT name FROM sqlite_master WHERE name != 'sqlite_sequence'"
-        response = self.execute_sql(sql, False)
-
-        result = []
-        for element in response:
-            result.append(element[0].encode("ascii"))
+        result = [x.encode("ascii") for x in self.db.Tables if x != "sqlite_sequence"]
         return result
 
     @fusqlogger.log
@@ -92,24 +41,26 @@ class FusqlDb(object):
         '''Returns a list of tuples (name, type) with the
            table columns name and type'''
 
-        sql = "PRAGMA TABLE_INFO(%s)" % table
-        # I plan handle sites here. 
-
         # TODO: Magic to guess file mimetype if it's a binary file
 
-        response = self.execute_sql(sql, False)
+        schema = self.db.XSchema(table)
+        result = [(x["COLUMN_NAME"].encode("ascii").lower(), \
+                   common.DB_TYPE_TRANSLATOR[x["COLUMN_TYPE"].encode("ascii")]) \
+                   for x in schema.columns()]
 
-        result = []
-        for element in response:
-            element_name = element[1].encode("ascii")
-            if element_name in common.FILE_SPECIAL_CASES.keys():
-                element_type = common.FILE_SPECIAL_CASES[element_name]
-            else:
-                element_type = common.DB_TYPE_TRANSLATOR[element[2].encode("ascii")]
-            if element_name == "start": # I can't name a column index,
-                                        # so I handle it here
-                element_name = "index"
-            result.append((element_name, element_type))
+        # response = self.execute_sql(sql, False)
+
+        # result = []
+        # for element in response:
+        #     element_name = element[1].encode("ascii")
+        #     if element_name in common.FILE_SPECIAL_CASES.keys():
+        #         element_type = common.FILE_SPECIAL_CASES[element_name]
+        #     else:
+        #         element_type = common.DB_TYPE_TRANSLATOR[element[2].encode("ascii")]
+        #     if element_name == "start": # I can't name a column index,
+        #                                 # so I handle it here
+        #         element_name = "index"
+        #     result.append((element_name, element_type))
 
         return result
 
@@ -136,29 +87,34 @@ class FusqlDb(object):
     @fusqlogger.log
     def get_element_data(self, table_name, element_column, element_id, use_cache=True):
         '''Returns the data of a cell'''
-        
+
         result = ""
-        if element_column == "index":
-            element_column = "start"
+        # if element_column == "index":
+        #     element_column = "start"
 
-        sql = "SELECT %s FROM '%s' WHERE id = %d" % \
-              (element_column, table_name, element_id)
-        response = self.execute_sql(sql, False, useCache=use_cache)
+        # sql = "SELECT %s FROM '%s' WHERE id = %d" % \
+        #       (element_column, table_name, element_id)
+        # response = self.execute_sql(sql, False, useCache=use_cache)
 
-        response = response[0][0]
-        if response is not None:
-            if type(response) == buffer:
-                for b in response:
-                    result += b
-            else:
-                result = str(response)
+        # response = response[0][0]
+        # if response is not None:
+        #     if type(response) == buffer:
+        #         for b in response:
+        #             result += b
+        #     else:
+        #         result = str(response)
+
+        elements = self.db.XArray(table_name)
+        for elem in elements:
+            if elem.id == element_id:
+                result = getattr(elem, element_column)
 
         return result
-    
+
     #@fusqlogger.log
     def set_element_data(self, table_name, column_name, element_id, value):
         '''Modifies a table field'''
-        
+
         if column_name == "index":
             column_name = "start"
 

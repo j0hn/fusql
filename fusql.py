@@ -5,11 +5,11 @@
 # the extent permitted by applicable law. You can redistribute it
 # and/or modify it under the terms of the Do What The Fuck You Want
 # To Public License, Version 2, as published by Sam Hocevar. See
-# http://sam.zoy.org/wtfpl/COPYING for more details. 
+# http://sam.zoy.org/wtfpl/COPYING for more details.
 
 
 from errno import *
-from stat import * 
+from stat import *
 import fuse
 import os
 import time
@@ -24,14 +24,14 @@ class Metadata(fuse.Stat):
     @fusqlogger.log
     def __init__(self, mode, isDir):
         fuse.Stat.__init__(self)
-        
+
         if isDir:
             self.st_mode = S_IFDIR | mode
             self.st_nlink = 2
         else:
             self.st_mode = S_IFREG | mode
             self.st_nlink = 1
-            
+
         now = int(time.time())
         self.st_atime = now
         self.st_mtime = now
@@ -44,10 +44,10 @@ class FuSQL(fuse.Fuse):
     @fusqlogger.log
     def __init__(self, *args, **kw):
         fuse.Fuse.__init__(self, *args, **kw)
-        self.db = fusqldb.FusqlDb("test.db")
-       
-        root_mode = S_IRUSR|S_IXUSR|S_IWUSR|S_IRGRP|S_IXGRP|S_IXOTH|S_IROTH 
-        file_mode = S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH 
+        self.db = fusqldb.FusqlDb("sqlite", "test.db")
+
+        root_mode = S_IRUSR|S_IXUSR|S_IWUSR|S_IRGRP|S_IXGRP|S_IXOTH|S_IROTH
+        file_mode = S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH
 
         # Create shared metadata for files and directories
         self.dir_metadata = Metadata(root_mode, True)
@@ -91,6 +91,7 @@ class FuSQL(fuse.Fuse):
                 row_id = int(spath[2])
                 column_name = spath[3].rsplit(".", 1)[0]
                 data = self.db.get_element_data(table_name, column_name, row_id)
+                print data, type(data)
 
                 result = self.file_metadata
                 result.st_size = len(data)
@@ -125,7 +126,7 @@ class FuSQL(fuse.Fuse):
         # Files MUST be inside a table and a row
         if len(spath) != 4:
             return -EPERM
-        
+
         # Files must end in a known type
         file_type = spath[3].split(".")[-1]
         if file_type not in common.FILE_TYPE_TRANSLATOR.keys():
@@ -164,13 +165,13 @@ class FuSQL(fuse.Fuse):
 
         if offset + write_size > prev_size:
             self.truncate(path, offset + write_size)
-        
+
         new_data = prev_data[:offset] + buf + prev_data[offset+len(buf):]
 
         self.db.set_element_data(table_name, column_name, row_id, new_data)
 
         return write_size
-        
+
     @fusqlogger.log
     def truncate(self, path, size, fh=None):
         spath = path.split("/")
@@ -202,7 +203,7 @@ class FuSQL(fuse.Fuse):
 
         table_from = spath_from[1]
         table_to = spath_to[1]
-        
+
         # Must be at the same deep
         if len(spath_from) != len(spath_to):
             return -EINVAL
@@ -216,24 +217,24 @@ class FuSQL(fuse.Fuse):
                 return -EINVAL
 
             self.db.set_element_data(table_to, "id", id_from, id_to)
-            
+
         else:
             # If its a table
 
             self.db.rename_table(table_from, table_to)
-            
+
         for dir_name in self.paths:
             if dir_name.startswith(path_from):
                 dir_to = dir_name.replace(path_from, path_to)
                 self.paths.append(dir_to)
                 self.paths.remove(dir_name)
-        
+
         return 0
-    
+
     @fusqlogger.log
     def chmod(self, path, mode):
         return 0
-    
+
     @fusqlogger.log
     def chown(self, path, uid, gid):
         return 0
@@ -272,7 +273,7 @@ class FuSQL(fuse.Fuse):
 
             row_path = table_path + "/" + str(element_id)
             self.paths.append(row_path)
-            
+
             table_structure = self.db.get_table_structure(table_name)
             # Fill the row with the column files
 
@@ -304,9 +305,9 @@ class FuSQL(fuse.Fuse):
                     self.paths.remove(i)
 
         if is_table:
-            table_elements = self.db.get_all_elements(table_name)
+            num_rows = self.db.get_cant_rows(table_name)
 
-            if len(table_elements) == 0:
+            if num_rows == 0:
                 self.db.delete_table(table_name)
                 remove_paths(path)
             else:
@@ -324,7 +325,7 @@ class FuSQL(fuse.Fuse):
 
         if path != "/":
             path = path + "/"
-        
+
         for i in self.paths:
             if i.startswith(path) and i != "/":
                 name = i.split(path)[1]
@@ -332,7 +333,7 @@ class FuSQL(fuse.Fuse):
 
                 if name not in result:
                     result.append(name)
-        
+
         for i in result:
                 yield fuse.Direntry(i)
 
@@ -345,4 +346,4 @@ if __name__ == '__main__':
     fs = FuSQL()
     fs.parse(errex=1)
     fs.main()
-    
+
